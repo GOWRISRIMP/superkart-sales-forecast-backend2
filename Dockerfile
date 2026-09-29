@@ -6,11 +6,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy deployment files
+# Copy all deployment files into /app
 COPY . .
 
-# Hugging Face Spaces expose port 7860
+# Default port exposed
 EXPOSE 7860
 
-# Run Flask backend using Gunicorn on port 7860
-CMD ["gunicorn", "-b", "0.0.0.0:7860", "backend_files.app:superkart_api"]
+# Run Flask backend using Gunicorn pointing directly to app:app
+CMD ["gunicorn", "-b", "0.0.0.0:7860", "app:app"]
