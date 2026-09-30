@@ -1,57 +1,70 @@
-
-# Streamlit Web App for SuperKart Sales Forecasting
-import streamlit as st
-import requests
+import os
+import joblib
+import pandas as pd
 import numpy as np
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 
-# Add Logo
-st.image("https://i.postimg.cc/2yM4LgJM/Superkart-notebook-cover-image.png", width=400)
+app = Flask(__name__)
+CORS(app)  # Enables cross-origin requests for HTML/JS frontend or Streamlit
 
-# App Title
-st.title("🛒 SuperKart Sales Forecasting App")
+# Load trained model
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "superkart_model.joblib")  # Make sure filename matches your model file
 
-# Instructions
-st.markdown("🔍 Enter product and store attributes to forecast **monthly product sales revenue**.\n\n_All sales are reported in ($) USD._")
+try:
+    model = joblib.load(MODEL_PATH)
+    print("✅ Model loaded successfully!")
+except Exception as e:
+    print(f"❌ Error loading model: {e}")
+    model = None
 
-# User Inputs
-Product_Weight = st.number_input("Product Weight (oz)", min_value=0.0, value=12.66)
-Product_Sugar_Content = st.selectbox("Product Sugar Content", ["Low Sugar", "Regular", "No Sugar"])
-Product_Allocated_Area = st.number_input("Product Allocated Area (linear in.)", min_value=0.0, value=100.0)
-Product_MRP = st.number_input("Maximum Retail Price (USD)", min_value=0.0, value=150.0)
-Store_Size = st.selectbox("Store Size", ["Small", "Medium", "High"])
-Store_Location_City_Type = st.selectbox("Store Location City Type", ["Tier 1", "Tier 2", "Tier 3"])
-Store_Type = st.selectbox("Store Type", ["Supermarket Type1", "Supermarket Type2", "Departmental Store", "Food Mart"])
-Store_Age_Years = st.slider("Store Age (years)", min_value=0, max_value=30, value=10)
-Product_Type_Category = st.selectbox("Product Type Category", ["Perishables", "Non Perishables"])
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"status": "SuperKart Sales Forecast API is live"})
 
-# Apply log1p transform (must match backend model training)
-Product_Allocated_Area_Log = np.log1p(Product_Allocated_Area)
+@app.route("/predict", methods=["POST"])
+def predict():
+    if model is None:
+        return jsonify({"error": "Model not loaded"}), 500
 
-# Prepare JSON payload for the backend
-product_data = {
-    "Product_Weight": str(Product_Weight),
-    "Product_Sugar_Content": Product_Sugar_Content,
-    "Product_Allocated_Area": str(Product_Allocated_Area),
-    "Product_MRP": str(Product_MRP),
-    "Store_Size": Store_Size,
-    "Store_Location_City_Type": Store_Location_City_Type,
-    "Store_Type": Store_Type,
-    "Store_Age_Years": str(Store_Age_Years),
-    "Product_Type_Category": Product_Type_Category
-}
-
-# Trigger Prediction
-if st.button("Predict", type='primary'):
     try:
-        response = requests.post(
-            "https://Gowrisri-superkart-sales-forecast-backend2.hf.space/v1/predict",
-            json=product_data
-        )
-        if response.status_code == 200:
-            result = response.json()
-            predicted_sales = result["Predicted_Sales"]
-            st.success(f"📈 Predicted Monthly Sales: **${predicted_sales:,.2f} USD**")
-        else:
-            st.error("❌ API Error: Please verify input values or try again later.")
+        data = request.get_json()
+
+        # Convert input types
+        product_weight = float(data.get("Product_Weight", 0))
+        product_sugar = data.get("Product_Sugar_Content")
+        product_area = float(data.get("Product_Allocated_Area", 0))
+        product_mrp = float(data.get("Product_MRP", 0))
+        store_size = data.get("Store_Size")
+        store_city = data.get("Store_Location_City_Type")
+        store_type = data.get("Store_Type")
+        store_age = float(data.get("Store_Age_Years", 0))
+        product_category = data.get("Product_Type_Category")
+
+        # Transform features to match training pipeline
+        product_area_log = np.log1p(product_area)
+
+        # Build DataFrame for prediction
+        input_df = pd.DataFrame([{
+            "Product_Weight": product_weight,
+            "Product_Sugar_Content": product_sugar,
+            "Product_Allocated_Area": product_area_log,
+            "Product_MRP": product_mrp,
+            "Store_Size": store_size,
+            "Store_Location_City_Type": store_city,
+            "Store_Type": store_type,
+            "Store_Age_Years": store_age,
+            "Product_Type_Category": product_category
+        }])
+
+        # Predict
+        prediction = model.predict(input_df)[0]
+
+        return jsonify({"Predicted_Sales": round(float(prediction), 2)})
+
     except Exception as e:
-        st.error(f"⚠️ Connection error: {e}")
+        return jsonify({"error": str(e)}), 400
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=7860)

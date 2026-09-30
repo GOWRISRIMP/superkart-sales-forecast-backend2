@@ -1,69 +1,69 @@
-import numpy as np
-import pandas as pd
+import os
 import joblib
+import pandas as pd
+import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-# Initialize Flask app
-superkart_api = Flask("superkart_sales_api")
-CORS(superkart_api)
+app = Flask(__name__)
+CORS(app)  # Allows HTML/JS on GitHub Pages to connect
 
-# Load the trained model pipeline (preprocessing + model)
-model = joblib.load("/content/drive/My Drive/Colab Notebooks/Project 7/deployment_files/superkart_sales_forecast_model_v1_0.joblib")
+# Locate and load the trained model relative to this file
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Update filename if your model has a different name (e.g., model.joblib or model.pkl)
+MODEL_PATH = os.path.join(BASE_DIR, "superkart_model.joblib")
 
-# Health check route
-@superkart_api.get('/')
+try:
+    model = joblib.load(MODEL_PATH)
+    print("✅ Model loaded successfully!")
+except Exception as e:
+    print(f"❌ Error loading model: {e}")
+    model = None
+
+@app.route("/", methods=["GET"])
 def home():
-    return "✅ Welcome to the SuperKart Sales Prediction API"
+    return jsonify({"status": "SuperKart Sales Forecast API is live"})
 
-# Prediction route
-@superkart_api.post('/v1/predict')
-def predict_sales():
+@app.route("/predict", methods=["POST"])
+def predict():
+    if model is None:
+        return jsonify({"error": "Model not loaded on server"}), 500
+
     try:
-        # Parse JSON payload
         data = request.get_json()
-        print("Raw incoming data:", data)
 
-        # Validate expected fields
-        required_fields = [
-            'Product_Weight',
-            'Product_Sugar_Content',
-            'Product_Allocated_Area',
-            'Product_MRP',
-            'Store_Size',
-            'Store_Location_City_Type',
-            'Store_Type',
-            'Store_Age_Years',
-            'Product_Type_Category'
-        ]
-        missing_fields = [f for f in required_fields if f not in data]
-        if missing_fields:
-            return jsonify({'error': f"Missing fields: {missing_fields}"}), 400
+        # Extract parameters sent from frontend
+        product_weight = float(data.get("Product_Weight", 0))
+        product_sugar = data.get("Product_Sugar_Content")
+        product_area = float(data.get("Product_Allocated_Area", 0))
+        product_mrp = float(data.get("Product_MRP", 0))
+        store_size = data.get("Store_Size")
+        store_city = data.get("Store_Location_City_Type")
+        store_type = data.get("Store_Type")
+        store_age = float(data.get("Store_Age_Years", 0))
+        product_category = data.get("Product_Type_Category")
 
-        # Convert and transform input
-        sample = {
-            'Product_Weight': float(data['Product_Weight']),
-            'Product_Sugar_Content': data['Product_Sugar_Content'],
-            'Product_Allocated_Area_Log': np.log1p(float(data['Product_Allocated_Area'])),  # transform here
-            'Product_MRP': float(data['Product_MRP']),
-            'Store_Size': data['Store_Size'],
-            'Store_Location_City_Type': data['Store_Location_City_Type'],
-            'Store_Type': data['Store_Type'],
-            'Store_Age_Years': int(data['Store_Age_Years']),
-            'Product_Type_Category': data['Product_Type_Category']
-        }
+        # Feature Transformation
+        product_area_log = np.log1p(product_area)
 
-        input_df = pd.DataFrame([sample])
-        print("Transformed input for model:\n", input_df)
+        # Create DataFrame matching training format
+        input_df = pd.DataFrame([{
+            "Product_Weight": product_weight,
+            "Product_Sugar_Content": product_sugar,
+            "Product_Allocated_Area": product_area_log,
+            "Product_MRP": product_mrp,
+            "Store_Size": store_size,
+            "Store_Location_City_Type": store_city,
+            "Store_Type": store_type,
+            "Store_Age_Years": store_age,
+            "Product_Type_Category": product_category
+        }])
 
-        # Make prediction
-        prediction = model.predict(input_df).tolist()[0]
-        return jsonify({'Predicted_Sales': prediction})
+        prediction = model.predict(input_df)[0]
+        return jsonify({"Predicted_Sales": round(float(prediction), 2)})
 
     except Exception as e:
-        print("❌ Error during prediction:", str(e))
-        return jsonify({'error': f"Prediction failed: {str(e)}"}), 500
+        return jsonify({"error": str(e)}), 400
 
-# Run the app (for local testing only)
-if __name__ == '__main__':
-    superkart_api.run(debug=True)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=7860)
